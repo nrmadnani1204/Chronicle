@@ -3,6 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import { spawn, ChildProcess } from "child_process";
 
 dotenv.config();
 
@@ -12,6 +13,73 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 // Standard Top-Level Request Deserialization (Ordering Guarantee)
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+
+// --- Python sidecar (same container, internal-only port) ---
+const PYTHON_SIDECAR_PORT = 8001;
+const PYTHON_SIDECAR_URL = `http://127.0.0.1:${PYTHON_SIDECAR_PORT}`;
+let pythonProcess: ChildProcess | null = null;
+let pythonReady = false;
+
+function startPythonSidecar() {
+  try {
+    pythonProcess = spawn("python3", ["main.py"], {
+      stdio: "inherit",
+      env: { ...process.env, PORT: String(PYTHON_SIDECAR_PORT) },
+    });
+
+    pythonProcess.on("error", (err) => {
+      // ENOENT here almost always means python3 isn't installed/on PATH —
+      // common on local Windows dev. Non-fatal: the rest of the app still runs.
+      console.error("[python-sidecar] Failed to start:", err.message);
+      console.error("[python-sidecar] Continuing without it — routes that depend on it will return 503.");
+    });
+
+    pythonProcess.on("exit", (code) => {
+      pythonReady = false;
+      console.error(`[python-sidecar] Exited with code ${code}.`);
+    });
+  } catch (err: any) {
+    console.error("[python-sidecar] Could not spawn:", err?.message || err);
+  }
+}
+
+async function waitForPythonSidecar(timeoutMs = 10000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`${PYTHON_SIDECAR_URL}/health`);
+      if (res.ok) {
+        pythonReady = true;
+        console.log("[python-sidecar] Ready.");
+        return;
+      }
+    } catch {
+      // Not up yet — keep polling.
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  console.error(`[python-sidecar] Did not become ready within ${timeoutMs}ms — continuing without it.`);
+}
+
+// Temporary test route — hits the Python sidecar's /echo to prove the wiring
+// works end to end. Delete once you've wired real endpoints to the sidecar.
+app.post("/api/python-test", async (req, res) => {
+  if (!pythonReady) {
+    return res.status(503).json({ error: "Python sidecar is not ready." });
+  }
+  try {
+    const pyRes = await fetch(`${PYTHON_SIDECAR_URL}/echo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body || {}),
+    });
+    const data = await pyRes.json();
+    return res.json(data);
+  } catch (err: any) {
+    console.error("[python-sidecar] Request failed:", err?.message || err);
+    return res.status(502).json({ error: "Python sidecar request failed." });
+  }
+});
 
 // Resilient Model Fallback Ladder following modern Gemini API guidelines
 const MODEL_FALLBACK_LADDER = [
@@ -316,6 +384,13 @@ async function generateContentWithFallback(params: {
     return null;
   }
 
+  let sawQuotaExhaustion = false;
+
+  // Gemini 3.x deprecates temperature/top_p/top_k in favor of thinkingLevel —
+  // strip them here so every caller (and every model in the ladder) stays valid
+  // without having to edit each of the five call sites individually.
+  const { temperature: _t, top_p: _tp, top_k: _tk, ...restConfig } = params.config || {};
+
   for (const model of MODEL_FALLBACK_LADDER) {
     try {
       const response = await ai.models.generateContent({
@@ -323,7 +398,7 @@ async function generateContentWithFallback(params: {
         contents: params.contents,
         config: {
           systemInstruction: params.systemInstruction,
-          ...params.config,
+          ...restConfig,
         },
       });
 
@@ -333,15 +408,25 @@ async function generateContentWithFallback(params: {
           modelUsed: model,
         };
       }
+      console.warn(`[gemini] ${model} returned no text; trying next model in ladder.`);
     } catch (err: any) {
+      // Always log — a swallowed error here is invisible in the UI, and this is
+      // usually the only trace of *why* the app fell back to a canned response.
+      console.error(`[gemini] ${model} failed:`, err?.message || err);
       if (isQuotaExhaustedError(err)) {
-        // Prepayment credits depleted or quota exhausted across the project
-        return null;
+        sawQuotaExhaustion = true;
+        // Don't abort here — quota can be per-model (e.g. a brand-new model with
+        // a tighter rate limit), so still give the rest of the ladder a chance.
       }
-      // Continue to next model in the fallback ladder for non-quota errors
+      // Continue to next model in the fallback ladder either way.
     }
   }
 
+  if (sawQuotaExhaustion) {
+    console.error("[gemini] All models in the fallback ladder hit quota/rate limits.");
+  } else {
+    console.error("[gemini] All models in the fallback ladder failed (non-quota errors).");
+  }
   return null;
 }
 
@@ -480,7 +565,9 @@ The user wants calm company. Respond in a few gentle words without forcing anoth
       isOfflineCompanion: true,
     });
   } catch (error: any) {
-    // Zero-downtime safety: even on unexpected error, provide companion response
+    // Zero-downtime safety: even on unexpected error, provide companion response —
+    // but log it, otherwise this whole endpoint can silently degrade with no trace.
+    console.error("[chronicle/respond] Unexpected error:", error?.message || error);
     const fallbackText = generateCompanionFallbackResponse({
       prompt: req.body?.prompt || "",
       mode: req.body?.mode,
@@ -799,6 +886,11 @@ app.post("/api/gemini/title", async (req, res) => {
 
 // Mount Vite or Static files
 async function start() {
+  startPythonSidecar();
+  // Bounded wait — if python3 isn't available (e.g. local Windows dev with no
+  // Python installed), this times out after 10s and the app starts anyway.
+  waitForPythonSidecar();
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
