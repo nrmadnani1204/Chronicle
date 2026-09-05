@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg: #FBF9F6;
+    --sidebar-bg: #FAF8F4;
+    --ink: #1A1A1A;
+    --accent: #C8B6A6;
+    --border: #E5E1DA;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg);
+    color: var(--ink);
+    margin: 0;
+  }
+
+  h1, h2, h3, h4, .serif {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+/* Custom Editorial Palette Utilities */
+.bg-editorial-bg {
+  background-color: #FBF9F6;
+}
+
+.bg-editorial-sidebar {
+  background-color: #FAF8F4;
+}
+
+.bg-editorial-card {
+  background-color: #FFFFFF;
+}
+
+.text-editorial-ink {
+  color: #1A1A1A;
+}
+
+.text-editorial-accent {
+  color: #C8B6A6;
+}
+
+.text-editorial-muted {
+  color: #716E68;
+}
+
+.border-editorial {
+  border-color: #E5E1DA;
+}
+
+.font-editorial-serif {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+.font-editorial-sans {
+  font-family: 'Inter', sans-serif;
+}
+
