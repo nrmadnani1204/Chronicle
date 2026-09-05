@@ -1,6 +1,6 @@
 {
-  "name": "Reflections Journal",
-  "description": "User-authenticated reflection journal with Gemini AI feedback and Firestore persistence.",
-  "requestFramePermissions": [],
+  "name": "Chronicle",
+  "description": "A voice-first personal journaling companion that remembers the person behind the journal.",
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

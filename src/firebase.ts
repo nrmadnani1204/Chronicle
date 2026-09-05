@@ -19,7 +19,7 @@ import {
   orderBy,
   onSnapshot,
 } from 'firebase/firestore';
-import type { JournalInteraction } from './types';
+import type { JournalInteraction, ChronicleMemory, UserProfile } from './types';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase App singleton
@@ -118,3 +118,56 @@ export function subscribeToUserInteractions(
     }
   );
 }
+
+// User-Isolated Memories Collection: /users/{userId}/memories/{memoryId}
+export function getMemoriesCollection(userId: string) {
+  if (!userId) throw new Error('User ID is required.');
+  return collection(db, 'users', userId, 'memories');
+}
+
+export async function saveMemory(
+  userId: string,
+  memory: ChronicleMemory
+): Promise<void> {
+  if (!userId) throw new Error('User is not authenticated.');
+  const docRef = doc(db, 'users', userId, 'memories', memory.id);
+  await setDoc(docRef, sanitizeForFirestore(memory), { merge: true });
+}
+
+export async function deleteMemory(
+  userId: string,
+  memoryId: string
+): Promise<void> {
+  if (!userId) throw new Error('User is not authenticated.');
+  const docRef = doc(db, 'users', userId, 'memories', memoryId);
+  await deleteDoc(docRef);
+}
+
+export function subscribeToUserMemories(
+  userId: string,
+  onUpdate: (memories: ChronicleMemory[]) => void,
+  onError: (error: Error) => void
+) {
+  if (!userId) {
+    onUpdate([]);
+    return () => {};
+  }
+
+  const q = query(getMemoriesCollection(userId), orderBy('createdAt', 'desc'));
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: ChronicleMemory[] = [];
+      snapshot.forEach((docSnap) => {
+        items.push(docSnap.data() as ChronicleMemory);
+      });
+      onUpdate(items);
+    },
+    (err) => {
+      console.error('Firestore memories subscription error:', err);
+      onError(err);
+    }
+  );
+}
+

@@ -1,68 +1,128 @@
 import React from 'react';
-import { LogOut, ShieldCheck, Menu, BookMarked, User as UserIcon } from 'lucide-react';
+import { LogOut, Bookmark, Heart, Sparkles, User as UserIcon } from 'lucide-react';
 import { logOut } from '../firebase';
 import type { User } from 'firebase/auth';
 
 interface HeaderProps {
   user: User;
-  onToggleSidebar?: () => void;
+  onNewVentSession: () => void;
   entriesCount: number;
+  memoryCount: number;
+  onOpenMemoryDrawer: () => void;
+  onOpenWeeklyReceipts: () => void;
+  onOpenHappyPlace: () => void;
+  onOpenLittleThings?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ user, onToggleSidebar, entriesCount }) => {
+export const Header: React.FC<HeaderProps> = ({
+  user,
+  onNewVentSession,
+  memoryCount,
+  onOpenMemoryDrawer,
+  onOpenWeeklyReceipts,
+  onOpenHappyPlace,
+  onOpenLittleThings,
+}) => {
   return (
-    <header className="h-16 border-b border-[#E5E1DA] bg-[#FBF9F6]/95 backdrop-blur-sm sticky top-0 z-20 px-4 sm:px-8 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        {onToggleSidebar && (
+    <header className="h-16 border-b border-[#232336] bg-[#0C0C14]/90 backdrop-blur-md sticky top-0 z-30 px-3 sm:px-6 flex items-center justify-between transition-colors">
+      {/* Brand & Prominent New Vent Session Button */}
+      <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#FF6B4A] to-[#C83E22] text-white flex items-center justify-center font-serif italic text-base font-bold shadow-[0_0_15px_rgba(255,107,74,0.3)] select-none">
+            C
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="font-serif font-semibold text-[#F3F0EB] text-lg leading-tight tracking-tight">
+                Chronicle
+              </h1>
+              <span className="hidden lg:inline-block text-[11px] text-[#8E8A9F] font-sans font-light italic">
+                &mdash; You don&apos;t have to write. Just talk.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Primary Requested Action: NEW VENT SESSION 🎙️ */}
+        <button
+          id="header-new-vent-session-btn"
+          onClick={onNewVentSession}
+          className="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl bg-gradient-to-r from-[#FF6B4A] to-[#E04828] text-white font-mono tracking-wider text-xs uppercase font-bold shadow-[0_0_20px_rgba(255,107,74,0.35)] hover:shadow-[0_0_28px_rgba(255,107,74,0.55)] hover:scale-[1.02] active:scale-[0.97] transition-all cursor-pointer border border-[#FFA58C]/40"
+          title="Start a fresh venting conversation"
+        >
+          <span>NEW VENT SESSION 🎙️</span>
+        </button>
+      </div>
+
+      {/* Companion Actions */}
+      <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* What Chronicle Remembers */}
+        <button
+          id="header-memory-btn"
+          onClick={onOpenMemoryDrawer}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#161624] border border-[#2B2B3E] text-xs font-medium text-[#F3F0EB] hover:border-[#FF6B4A]/50 hover:bg-[#1E1E30] transition-all cursor-pointer"
+          title="What Chronicle Remembers About You"
+        >
+          <Bookmark className="w-3.5 h-3.5 text-[#FF6B4A]" />
+          <span className="hidden sm:inline">Memory</span>
+          {memoryCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-[#FF6B4A]/20 text-[#FF6B4A] text-[10px] font-semibold border border-[#FF6B4A]/30">
+              {memoryCount}
+            </span>
+          )}
+        </button>
+
+        {/* Little Things / Late Night Anchors */}
+        {onOpenLittleThings && (
           <button
-            id="mobile-sidebar-toggle-btn"
-            onClick={onToggleSidebar}
-            className="md:hidden p-2 text-[#1A1A1A] hover:text-black rounded-lg hover:bg-[#FAF8F4] border border-[#E5E1DA] transition-colors"
-            title="Toggle Journal History"
-            aria-label="Toggle Journal History"
+            id="header-little-things-btn"
+            onClick={onOpenLittleThings}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#161624] border border-[#2B2B3E] text-xs font-medium text-[#F3F0EB] hover:border-[#FF6B4A]/50 hover:bg-[#1E1E30] transition-all cursor-pointer"
+            title="☾ Little Things — micro-comforts & quiet anchors"
           >
-            <Menu className="w-4 h-4" />
+            <span className="text-[#FF8B70]">☾</span>
+            <span className="hidden sm:inline">Little Things</span>
           </button>
         )}
 
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#1A1A1A] text-[#FBF9F6] flex items-center justify-center font-serif italic text-base font-bold shadow-xs">
-            R
-          </div>
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="font-serif font-normal text-[#1A1A1A] text-lg leading-tight tracking-tight">
-                Reflections Journal
-              </h1>
-              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white border border-[#E5E1DA] text-[10px] font-semibold uppercase tracking-[0.15em] text-[#1A1A1A]">
-                <ShieldCheck className="w-3 h-3 text-[#1A1A1A]" />
-                Firestore Isolated
-              </span>
-            </div>
-            <p className="text-[10px] uppercase tracking-[0.15em] text-[#C8B6A6] font-semibold hidden md:block">
-              {entriesCount} {entriesCount === 1 ? 'reflection' : 'reflections'} &bull; Gemini 3.6 Flash
-            </p>
-          </div>
-        </div>
-      </div>
+        {/* Happy Place / Comfort Protocol */}
+        <button
+          id="header-happy-place-btn"
+          onClick={onOpenHappyPlace}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#161624] border border-[#2B2B3E] text-xs font-medium text-[#F3F0EB] hover:border-[#FF6B4A]/50 hover:bg-[#1E1E30] transition-all cursor-pointer"
+          title="Emergency Comfort Protocol / Happy Places"
+        >
+          <Heart className="w-3.5 h-3.5 text-rose-400" />
+          <span className="hidden md:inline">Happy Place</span>
+        </button>
 
-      <div className="flex items-center gap-3">
-        {/* User profile indicator */}
-        <div className="flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full bg-white border border-[#E5E1DA] shadow-2xs">
+        {/* Weekly Receipts Button */}
+        <button
+          id="header-weekly-receipts-btn"
+          onClick={onOpenWeeklyReceipts}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#161624] border border-[#2B2B3E] text-xs font-medium text-[#F3F0EB] hover:border-[#FF6B4A]/50 hover:bg-[#1E1E30] transition-all cursor-pointer"
+          title="Chronicle has reviewed the evidence 💀"
+        >
+          <span>💀</span>
+          <span className="hidden md:inline">Receipts</span>
+        </button>
+
+        {/* User profile badge */}
+        <div className="flex items-center gap-2 pl-1.5 pr-2.5 py-1 rounded-full bg-[#161624] border border-[#2B2B3E]">
           {user.photoURL ? (
             <img
               src={user.photoURL}
               alt={user.displayName || 'User'}
-              className="w-6 h-6 rounded-full object-cover border border-[#E5E1DA]"
+              className="w-5 h-5 rounded-full object-cover border border-[#3A3A52]"
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className="w-6 h-6 rounded-full bg-[#C8B6A6] text-white flex items-center justify-center">
-              <UserIcon className="w-3.5 h-3.5" />
+            <div className="w-5 h-5 rounded-full bg-[#2A2A3E] text-white flex items-center justify-center">
+              <UserIcon className="w-3 h-3 text-[#FF6B4A]" />
             </div>
           )}
-          <span className="text-xs font-medium text-[#1A1A1A] max-w-[120px] truncate hidden sm:inline-block">
-            {user.displayName || user.email || 'Author'}
+          <span className="text-xs font-medium text-[#D5D2E0] max-w-[90px] truncate hidden xl:inline-block">
+            {user.displayName?.split(' ')[0] || user.email?.split('@')[0] || 'Friend'}
           </span>
         </div>
 
@@ -70,11 +130,10 @@ export const Header: React.FC<HeaderProps> = ({ user, onToggleSidebar, entriesCo
         <button
           id="header-signout-btn"
           onClick={() => logOut()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-lg text-[#1A1A1A] hover:bg-white active:scale-95 transition-all border border-[#E5E1DA] bg-transparent cursor-pointer"
-          title="Sign out of Reflections Journal"
+          className="p-2 text-[#8E8A9F] hover:text-[#FF6B4A] hover:bg-[#1A1A2A] rounded-xl transition-colors cursor-pointer border border-transparent hover:border-[#2B2B3E]"
+          title="Sign out of Chronicle"
         >
-          <LogOut className="w-3 h-3 opacity-60" />
-          <span className="hidden sm:inline">Log Out</span>
+          <LogOut className="w-3.5 h-3.5" />
         </button>
       </div>
     </header>
