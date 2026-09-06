@@ -15,6 +15,7 @@ import { ThingsLyingAround } from './ThingsLyingAround';
 import { RoomNavigation, type ChronicleMoodPersonality } from './RoomNavigation';
 import { chronicleAudio } from '../utils/audioFeedback';
 import { applyExtractionToGraph, buildSessionNode } from '../utils/graphSync';
+import { findSimilarMemories } from '../utils/memoryDedup';
 import { deriveMoodPersonality } from '../utils/moodPalette';
 import type {
   JournalInteraction,
@@ -36,6 +37,7 @@ interface JournalStudioProps {
   graphEdges?: GraphEdge[];
   onSaveGraphNode?: (node: GraphNode) => Promise<void>;
   onSaveGraphEdge?: (edge: GraphEdge) => Promise<void>;
+  onConfirmMemoryDeletion?: (memoryId: string) => Promise<void>;
   allPastSessions?: JournalInteraction[];
   onOpenMemoryDrawer?: () => void;
   onOpenHappyPlace?: () => void;
@@ -53,6 +55,7 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
   graphEdges = [],
   onSaveGraphNode = async () => {},
   onSaveGraphEdge = async () => {},
+  onConfirmMemoryDeletion = async () => {},
   allPastSessions = [],
   onOpenMemoryDrawer = () => {},
   onOpenHappyPlace = () => {},
@@ -70,6 +73,11 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
   const [customTitle, setCustomTitle] = useState(interaction?.title || '');
   const [voicePlaybackEnabled, setVoicePlaybackEnabled] = useState(true);
   const [showTextFallback, setShowTextFallback] = useState(false);
+  // Local-only: once a "forget this?" prompt is acted on (confirmed or
+  // dismissed), hide it immediately without needing a round-trip to persist
+  // the resolution — re-opening the session would just show it again, which
+  // is an acceptable tradeoff for how rarely that happens.
+  const [resolvedDeletionMessageIds, setResolvedDeletionMessageIds] = useState<Set<string>>(new Set());
   // Mood personality is derived from numeric mood (this session's, or the
   // most recent past session's if none is active yet) — manualOverride lets
   // the user explicitly force a tone via RoomNavigation, taking precedence
@@ -79,7 +87,23 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
     interaction?.mood || allPastSessions.find((s) => s.mood)?.mood || null;
   const derivedMoodPersonality = deriveMoodPersonality(currentMoodState);
   const moodPersonality = manualOverride ?? derivedMoodPersonality;
-  const [newlyExtractedMemories, setNewlyExtractedMemories] = useState<ChronicleMemory[]>([]);
+
+  // Best-effort, silent — powers "find nearby places" suggestions. Never
+  // blocks or shows an error if denied/unavailable; the location tool just
+  // returns nothing useful in that case.
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    // maximumAge lets the browser hand back a recent cached fix instantly
+    // instead of forcing a brand-new GPS lock (which can take well over 5s
+    // on a real device) — without this, a quick first message can easily
+    // beat the location home before it ever resolves.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setUserLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      () => {},
+      { timeout: 10000, maximumAge: 300000 }
+    );
+  }, []);
 
   // Live real-time clock (e.g. 11:47 pm)
   const [currentTimeStr, setCurrentTimeStr] = useState('');
@@ -116,14 +140,13 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
       setCustomTitle('');
       setInputText('');
       setShowTextFallback(false);
-      setNewlyExtractedMemories([]);
     }
   }, [interaction?.id]);
 
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [interaction?.messages?.length, isResponding, newlyExtractedMemories.length]);
+  }, [interaction?.messages?.length, isResponding]);
 
   // Speech synthesis playback helper
   const speakText = (text: string) => {
@@ -151,6 +174,22 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
     } catch (e) {
       console.error('Failed to copy', e);
     }
+  };
+
+  // Human-in-the-loop memory deletion — only ever fires from this explicit click.
+  const handleConfirmDeletion = async (messageId: string, memoryId: string) => {
+    chronicleAudio.playClick();
+    setResolvedDeletionMessageIds((prev) => new Set(prev).add(messageId));
+    try {
+      await onConfirmMemoryDeletion(memoryId);
+    } catch (err) {
+      console.error('Failed to delete memory:', err);
+    }
+  };
+
+  const handleDismissDeletion = (messageId: string) => {
+    chronicleAudio.playClick();
+    setResolvedDeletionMessageIds((prev) => new Set(prev).add(messageId));
   };
 
   // Process user message (Voice or typed)
@@ -196,6 +235,13 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
         .slice(0, 20)
         .map((n) => (n.description ? `${n.label}: ${n.description}` : n.label));
 
+      // People the user has actually mentioned before — powers "have you
+      // talked to X?" nudges without needing real Contacts API access.
+      const peopleContext = graphNodes
+        .filter((n) => n.type === 'person')
+        .sort((a, b) => b.referenceCount - a.referenceCount)
+        .map((n) => (n.description ? `${n.label}: ${n.description}` : n.label));
+
       const res = await fetch('/api/chronicle/respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -203,10 +249,13 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
           prompt,
           mode: selectedMode,
           history: existingMessages,
-          memories: memories.map((m) => m.text),
+          memories: memories.map((m) => ({ id: m.id, text: m.text })),
           graphContext,
+          people: peopleContext,
           pastSessions: formattedPast,
           tone: moodPersonality === 'angry' ? 'roast' : moodPersonality === 'heavy' ? 'gentle' : 'friend',
+          latitude: userLocation?.latitude,
+          longitude: userLocation?.longitude,
         }),
       });
 
@@ -228,6 +277,9 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
         role: 'model',
         content: replyText,
         timestamp: Date.now(),
+        song: data.song,
+        places: data.places,
+        pendingDeletion: data.pendingDeletion,
       };
 
       const finalMessages = [...updatedMessages, companionMessage];
@@ -279,26 +331,82 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
 
           const extractData = await extractRes.json();
           if (extractData.success) {
-            const addedMemories: ChronicleMemory[] = [];
-            if (Array.isArray(extractData.memories)) {
-              for (const mem of extractData.memories) {
+            // Layer 1 (cheap, deterministic): shortlist existing memories
+            // that might already describe the same fact as each candidate,
+            // scoped to the same category. Layer 2 (LLM judge, only called
+            // if at least one candidate has a shortlist) decides per
+            // candidate whether it's genuinely new or should update an
+            // existing memory instead — this is what stops near-duplicates
+            // like two separately-worded "loves this song" memories.
+            const candidates: Array<{ text: string; category: string; type: string; importance: number }> =
+              Array.isArray(extractData.memories) ? extractData.memories : [];
+
+            const shortlistByCandidate = candidates.map((c) =>
+              findSimilarMemories(memories, c.text, (c.category || 'general') as ChronicleMemory['category'], 5)
+            );
+            const shortlistUnion = new Map<string, ChronicleMemory>();
+            shortlistByCandidate.forEach((list) => list.forEach((m) => shortlistUnion.set(m.id, m)));
+
+            let verdicts: Array<{ index: number; action: 'new' | 'update'; matchedMemoryId?: string; mergedText?: string }> = [];
+            if (shortlistUnion.size > 0) {
+              try {
+                const judgeRes = await fetch('/api/chronicle/judge-memory-duplicates', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    candidates: candidates.map((c, index) => ({ index, ...c })),
+                    shortlist: Array.from(shortlistUnion.values()).map((m) => ({
+                      id: m.id,
+                      text: m.text,
+                      category: m.category,
+                    })),
+                  }),
+                });
+                const judgeData = await judgeRes.json();
+                if (judgeData.success && Array.isArray(judgeData.verdicts)) {
+                  verdicts = judgeData.verdicts;
+                }
+              } catch (judgeErr) {
+                console.warn('Memory duplicate judge non-blocking error:', judgeErr);
+              }
+            }
+
+            const processedMemories: ChronicleMemory[] = [];
+            for (let index = 0; index < candidates.length; index++) {
+              const mem = candidates[index];
+              const verdict = verdicts.find((v) => v.index === index);
+              const existingMatch =
+                verdict?.action === 'update' && verdict.matchedMemoryId
+                  ? memories.find((m) => m.id === verdict.matchedMemoryId)
+                  : undefined;
+
+              if (existingMatch) {
+                const updatedMem: ChronicleMemory = {
+                  ...existingMatch,
+                  text: verdict?.mergedText || mem.text,
+                  importance: Math.max(existingMatch.importance, mem.importance || 0.8),
+                  updatedAt: Date.now(),
+                  history: [
+                    ...(existingMatch.history || []),
+                    { text: existingMatch.text, updatedAt: existingMatch.updatedAt || existingMatch.createdAt },
+                  ],
+                };
+                await onSaveMemory(updatedMem);
+                processedMemories.push(updatedMem);
+              } else {
                 const newMem: ChronicleMemory = {
                   id: `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
                   userId,
                   text: mem.text,
-                  category: mem.category || 'general',
-                  type: mem.type || 'semantic',
+                  category: (mem.category || 'general') as ChronicleMemory['category'],
+                  type: (mem.type || 'semantic') as ChronicleMemory['type'],
                   importance: mem.importance || 0.8,
                   createdAt: Date.now(),
                   sourceSessionId: interactionId,
                 };
                 await onSaveMemory(newMem);
-                addedMemories.push(newMem);
+                processedMemories.push(newMem);
               }
-            }
-
-            if (addedMemories.length > 0) {
-              setNewlyExtractedMemories((prev) => [...prev, ...addedMemories]);
             }
 
             // Knowledge graph sync from the LLM's extracted nodes/edges (or
@@ -323,13 +431,23 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
               console.warn('Extraction graph sync non-blocking error:', graphErr);
             }
 
+            // Attach whatever got captured/refined THIS turn to the specific
+            // message that produced it, so the "remembered" chip renders
+            // inline right there — not as a separate list pinned to the
+            // bottom of the whole conversation, out of chronological order.
+            const messagesWithMemoryChip = finalMessages.map((m) =>
+              m.id === companionMessage.id && processedMemories.length > 0
+                ? { ...m, extractedMemories: processedMemories }
+                : m
+            );
+
             const refreshedInteraction: JournalInteraction = {
               ...updatedInteraction,
               title: extractData.title || updatedInteraction.title,
               mood: extractData.mood,
+              messages: messagesWithMemoryChip,
               extractedMemoriesCount:
-                (updatedInteraction.extractedMemoriesCount || 0) +
-                (extractData.memories?.length || 0),
+                (updatedInteraction.extractedMemoriesCount || 0) + processedMemories.length,
             };
             await onSaveInteraction(refreshedInteraction);
 
@@ -636,6 +754,77 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
                         <p className="font-hand text-2xl text-[#EDEDF5] leading-snug whitespace-pre-wrap">
                           {msg.content}
                         </p>
+                        {msg.song && (
+                          <div className="mt-3 max-w-sm rounded-xl overflow-hidden border border-[#2B2B3E] bg-[#0E0E18] shadow-lg">
+                            <iframe
+                              width="100%"
+                              height="200"
+                              src={`https://www.youtube.com/embed/${msg.song.videoId}`}
+                              title={msg.song.title}
+                              frameBorder="0"
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                            />
+                            <div className="px-3 py-2 text-[10px] font-mono text-[#8E8A9F] truncate">
+                              🎵 {msg.song.title} &middot; {msg.song.channelTitle}
+                            </div>
+                          </div>
+                        )}
+
+                        {msg.places && msg.places.length > 0 && (
+                          <div className="mt-3 max-w-sm rounded-xl border border-[#2B2B3E] bg-[#0E0E18] shadow-lg p-3 space-y-2">
+                            <div className="text-[10px] font-mono uppercase tracking-wider text-[#FF6B4A]">
+                              📍 nearby
+                            </div>
+                            {msg.places.map((place, placeIdx) => (
+                              <div key={placeIdx} className="text-xs font-sans">
+                                <span className="text-[#F3F0EB] font-medium">{place.name}</span>
+                                {typeof place.rating === 'number' && (
+                                  <span className="text-[#8E8A9F]"> &middot; ⭐ {place.rating}</span>
+                                )}
+                                <div className="text-[10px] text-[#8E8A9F]">{place.address}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {msg.extractedMemories && msg.extractedMemories.length > 0 && (
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            {msg.extractedMemories.map((mem) => (
+                              <span
+                                key={mem.id}
+                                title={mem.text}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#1A1A28] border border-[#2E2E42] text-[10px] font-mono text-[#A09CB2] max-w-[220px]"
+                              >
+                                <span className="shrink-0">📌</span>
+                                <span className="truncate">{mem.updatedAt ? 'updated: ' : 'remembered: '}{mem.text}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {msg.pendingDeletion && !resolvedDeletionMessageIds.has(msg.id) && (
+                          <div className="mt-3 max-w-sm rounded-xl border border-[#5C2323] bg-[#1A1216] p-3">
+                            <p className="text-xs font-sans text-[#F3F0EB] mb-2">
+                              Forget this? &ldquo;{msg.pendingDeletion.memoryText}&rdquo;
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleConfirmDeletion(msg.id, msg.pendingDeletion!.memoryId)}
+                                className="px-3 py-1 rounded-lg bg-[#FF6B4A] hover:bg-[#FF5530] text-white text-[11px] font-mono cursor-pointer transition-colors"
+                              >
+                                Yes, forget it
+                              </button>
+                              <button
+                                onClick={() => handleDismissDeletion(msg.id)}
+                                className="px-3 py-1 rounded-lg bg-[#242430] hover:bg-[#2E2E3E] text-[#A09CB2] text-[11px] font-mono cursor-pointer transition-colors"
+                              >
+                                No, keep it
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="mt-2 flex items-center gap-2 text-[10px] font-mono text-[#6E6A7D]">
                           <button
                             onClick={() => handleCopy(msg.content, index)}
@@ -649,28 +838,6 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
                   </div>
                 );
               })}
-
-            {/* If new memories were extracted: A tiny Polaroid drops onto the screen! */}
-            {newlyExtractedMemories.map((mem) => (
-              <div
-                key={mem.id}
-                className="max-w-sm ml-4 my-4 p-3 bg-[#F3EFE6] text-[#1E1C1A] rounded-xs shadow-xl rotate-1 animate-fade-in relative border border-black/10"
-              >
-                {/* Washi tape strip */}
-                <div className="absolute -top-2 left-6 w-12 h-4 tape-strip -rotate-6 rounded-xs z-10" />
-
-                <div className="text-[10px] font-mono text-[#57534E] uppercase tracking-wider mb-1 flex items-center justify-between">
-                  <span>&gt; oh btw &mdash; I&apos;m keeping this one:</span>
-                  <span>🫡</span>
-                </div>
-                <p className="font-hand text-xl font-bold text-[#1F1C12] leading-snug mb-1.5">
-                  &ldquo;{mem.text}&rdquo;
-                </p>
-                <div className="text-[9px] font-mono text-[#78716C] text-right">
-                  putting this in the vault &bull; {mem.category}
-                </div>
-              </div>
-            ))}
 
             {/* Live Thinking/Listening Indicator */}
             {isResponding && (

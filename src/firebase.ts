@@ -203,6 +203,12 @@ export async function saveGraphEdge(userId: string, edge: GraphEdge): Promise<vo
   await setDoc(docRef, sanitizeForFirestore(edge), { merge: true });
 }
 
+export async function deleteGraphNode(userId: string, nodeId: string): Promise<void> {
+  if (!userId) throw new Error('User is not authenticated.');
+  const docRef = doc(db, 'users', userId, 'graph_nodes', nodeId);
+  await deleteDoc(docRef);
+}
+
 // Subscribes to both graph collections and merges updates into one callback,
 // mirroring subscribeToUserMemories/subscribeToUserInteractions.
 export function subscribeToUserGraph(

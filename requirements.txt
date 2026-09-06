@@ -7,3 +7,4 @@ google-auth>=2.57.1
 google-auth-oauthlib>=1.4.1
 google-auth-httplib2>=0.4.2
 firebase-admin>=7.5.0
+httpx>=0.28.1

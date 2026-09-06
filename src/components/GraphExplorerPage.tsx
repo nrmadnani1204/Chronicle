@@ -71,7 +71,7 @@ export const GraphExplorerPage: React.FC<GraphExplorerPageProps> = ({
         </button>
         <div className="pointer-events-auto inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#12121D]/80 backdrop-blur border border-[#26263A] text-xs font-mono text-[#A09CB2]">
           <Sparkles className="w-3.5 h-3.5 text-[#FF6B4A]" />
-          <span>{nodes.length} memories &bull; {edges.length} connections</span>
+          <span>{nodes.length} reflections &bull; {edges.length} connections</span>
         </div>
       </div>
 
@@ -80,7 +80,7 @@ export const GraphExplorerPage: React.FC<GraphExplorerPageProps> = ({
         {nodes.length === 0 ? (
           <div className="w-full h-full flex flex-col items-center justify-center text-center px-6">
             <span className="text-4xl mb-3">🕸️</span>
-            <p className="font-serif text-lg text-[#F3F0EB] mb-1">Your memory galaxy is still forming.</p>
+            <p className="font-serif text-lg text-[#F3F0EB] mb-1">Your reflections are still forming.</p>
             <p className="text-xs text-[#8E8A9F] font-mono max-w-xs">
               Keep talking to Chronicle — every vent session adds new stars to this map.
             </p>
@@ -97,11 +97,12 @@ export const GraphExplorerPage: React.FC<GraphExplorerPageProps> = ({
             nodeColor={(node: any) => (node.id === selectedNodeId ? '#FFFFFF' : getNodeColor(node))}
             nodeVal={(node: any) => getNodeBaseSize(node.type) * (node.id === selectedNodeId ? 2.2 : 1)}
             nodeOpacity={0.9}
-            linkColor={() => 'rgba(255,255,255,0.15)'}
-            linkWidth={1}
+            linkColor={() => 'rgba(255,138,110,0.35)'}
+            linkWidth={(link: any) => Math.max(1, (link.weight || 0.5) * 2)}
             linkDirectionalParticles={1}
-            linkDirectionalParticleWidth={1.2}
-            linkDirectionalParticleColor={() => '#FF6B4A'}
+            linkDirectionalParticleWidth={1.4}
+            linkDirectionalParticleColor={() => 'rgba(255,138,110,0.7)'}
+            linkDirectionalParticleSpeed={0.004}
             onNodeClick={handleNodeClick}
             onBackgroundClick={() => setSelectedNodeId(null)}
             showNavInfo={false}

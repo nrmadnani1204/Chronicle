@@ -40,3 +40,12 @@ GMAIL_SENDER_ADDRESS = os.environ.get("GMAIL_SENDER_ADDRESS")
 # When true, the weekly digest job logs the rendered email instead of
 # actually sending it via Gmail — safe for local testing.
 DIGEST_DRY_RUN = os.environ.get("DIGEST_DRY_RUN", "false").lower() in ("true", "1")
+
+# YouTube Data API v3 — used only for the agent's find_song_to_play tool
+# (public search, read-only). Not a secret in the credential sense, but kept
+# out of source control anyway; restricted to youtube.googleapis.com only.
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+
+# Places API — used only for the agent's find_nearby_places tool (public
+# search, read-only). Restricted to places-backend.googleapis.com only.
+PLACES_API_KEY = os.environ.get("PLACES_API_KEY")

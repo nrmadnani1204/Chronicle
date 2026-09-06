@@ -10,8 +10,10 @@ import {
   subscribeToUserMemories,
   saveGraphNode,
   saveGraphEdge,
+  deleteGraphNode,
   subscribeToUserGraph,
 } from './firebase';
+import { resolveMemoryNode } from './utils/graphSync';
 import { LandingPage } from './components/LandingPage';
 import { Header } from './components/Header';
 import { AtmosphereBar } from './components/AtmosphereBar';
@@ -21,7 +23,7 @@ import { HappyPlaceModal } from './components/HappyPlaceModal';
 import { LittleThingsModal } from './components/LittleThingsModal';
 import { GraphExplorerPage } from './components/GraphExplorerPage';
 import { MoodBackground } from './components/MoodBackground';
-import type { JournalInteraction, ChronicleMemory, MoodState, GraphNode, GraphEdge } from './types';
+import type { JournalInteraction, ChronicleMemory, GraphNode, GraphEdge } from './types';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -134,20 +136,6 @@ export default function App() {
     }
   };
 
-  // Memory handlers
-  const handleSaveMemory = async (memory: ChronicleMemory) => {
-    if (!currentUser) return;
-    await saveMemory(currentUser.uid, {
-      ...memory,
-      userId: currentUser.uid,
-    });
-  };
-
-  const handleDeleteMemory = async (memoryId: string) => {
-    if (!currentUser) return;
-    await deleteMemory(currentUser.uid, memoryId);
-  };
-
   // Knowledge graph handlers
   const handleSaveGraphNode = async (node: GraphNode) => {
     if (!currentUser) return;
@@ -157,6 +145,50 @@ export default function App() {
   const handleSaveGraphEdge = async (edge: GraphEdge) => {
     if (!currentUser) return;
     await saveGraphEdge(currentUser.uid, { ...edge, userId: currentUser.uid });
+  };
+
+  // Manually-added memories (Memory Drawer, Happy Place, Little Things) skip
+  // the vent-session LLM extraction pipeline entirely — without this they'd
+  // never appear in the knowledge graph at all. Non-blocking: a graph hiccup
+  // should never surface as an error for what is otherwise a successful
+  // memory save.
+  const syncMemoryToGraph = async (memory: ChronicleMemory) => {
+    if (!currentUser) return;
+    try {
+      await handleSaveGraphNode(resolveMemoryNode(currentUser.uid, memory, graphNodes));
+    } catch (err) {
+      console.warn('Memory graph node sync non-blocking error:', err);
+    }
+  };
+
+  // Memory handlers
+  const handleSaveMemory = async (memory: ChronicleMemory) => {
+    if (!currentUser) return;
+    const withUser = { ...memory, userId: currentUser.uid };
+    await saveMemory(currentUser.uid, withUser);
+    await syncMemoryToGraph(withUser);
+  };
+
+  const handleDeleteMemory = async (memoryId: string) => {
+    if (!currentUser) return;
+    await deleteMemory(currentUser.uid, memoryId);
+  };
+
+  // Human-in-the-loop deletion: only ever called from an explicit "Yes,
+  // forget it" click in the UI, never automatically. Also cleans up the
+  // corresponding knowledge-graph node (linked via sourceMemoryId) so a
+  // corrected memory doesn't linger there either.
+  const handleConfirmMemoryDeletion = async (memoryId: string) => {
+    if (!currentUser) return;
+    await deleteMemory(currentUser.uid, memoryId);
+    const linkedNode = graphNodes.find((n) => n.sourceMemoryId === memoryId);
+    if (linkedNode) {
+      try {
+        await deleteGraphNode(currentUser.uid, linkedNode.id);
+      } catch (err) {
+        console.warn('Linked graph node cleanup non-blocking error:', err);
+      }
+    }
   };
 
   const handleAddHappyPlace = async (text: string) => {
@@ -171,6 +203,7 @@ export default function App() {
       createdAt: Date.now(),
     };
     await saveMemory(currentUser.uid, mem);
+    await syncMemoryToGraph(mem);
   };
 
   const handleRevisitSession = (interactionId: string) => {
@@ -190,6 +223,7 @@ export default function App() {
       createdAt: Date.now(),
     };
     await saveMemory(currentUser.uid, mem);
+    await syncMemoryToGraph(mem);
   };
 
   // Initial Auth Loading Screen
@@ -260,6 +294,7 @@ export default function App() {
           graphEdges={graphEdges}
           onSaveGraphNode={handleSaveGraphNode}
           onSaveGraphEdge={handleSaveGraphEdge}
+          onConfirmMemoryDeletion={handleConfirmMemoryDeletion}
           allPastSessions={interactions}
           onOpenMemoryDrawer={() => setIsMemoryDrawerOpen(true)}
           onOpenHappyPlace={() => setIsHappyPlaceOpen(true)}

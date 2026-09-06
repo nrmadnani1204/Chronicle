@@ -107,6 +107,10 @@ app.post("/api/chronicle/respond", (req, res) => proxyToPython("/api/chronicle/r
 // Chronicle Memory Extraction & Emotional Weather API — proxied to Python.
 app.post("/api/chronicle/extract-memory", (req, res) => proxyToPython("/api/chronicle/extract-memory", req.body, res));
 
+// Memory duplicate judge (layer 2 of dedup, only called when the client's
+// cheap fuzzy shortlist is non-empty) — proxied to Python.
+app.post("/api/chronicle/judge-memory-duplicates", (req, res) => proxyToPython("/api/chronicle/judge-memory-duplicates", req.body, res));
+
 // Internal weekly-digest trigger (Cloud Scheduler). This is the actual
 // internet-facing edge, so the shared-secret check happens here, not in
 // Python — the sidecar trusts that this check already ran.

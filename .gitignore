@@ -10,3 +10,5 @@ coverage/
 
 *.md
 *.pyc
+
+*.png

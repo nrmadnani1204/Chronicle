@@ -18,6 +18,12 @@ export interface ChronicleMemory {
   importance: number;
   createdAt: number;
   sourceSessionId?: string;
+  // Set when a later extraction judged a new candidate memory to be an
+  // update of this one (same underlying fact, refined text) rather than a
+  // separate memory — keeps the vault from filling with near-duplicates
+  // while still preserving what was said before.
+  updatedAt?: number;
+  history?: { text: string; updatedAt: number }[];
 }
 
 export interface MoodState {
@@ -27,12 +33,40 @@ export interface MoodState {
   weather: string; // e.g. "Soft & Reflective", "Passing Storm", "Restorative Warmth"
 }
 
+export interface SongEmbed {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+}
+
+export interface NearbyPlace {
+  name: string;
+  address: string;
+  rating?: number;
+}
+
+export interface PendingMemoryDeletion {
+  memoryId: string;
+  memoryText: string;
+}
+
 export interface JournalMessage {
   id: string;
   role: 'user' | 'model';
   content: string;
   timestamp: number;
   inputType?: 'voice' | 'text';
+  song?: SongEmbed;
+  places?: NearbyPlace[];
+  // Memories extracted specifically from THIS turn — rendered as a small
+  // inline chip right under this message, instead of a separate list
+  // pinned to the bottom of the whole conversation.
+  extractedMemories?: ChronicleMemory[];
+  // Set when the agent recognized a correction ("I don't like that, you
+  // misunderstood me") and proposed forgetting a specific memory — the UI
+  // shows an explicit confirm/cancel prompt; nothing is deleted until the
+  // user clicks "Yes".
+  pendingDeletion?: PendingMemoryDeletion;
 }
 
 export interface JournalInteraction {

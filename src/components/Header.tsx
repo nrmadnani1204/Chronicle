@@ -85,16 +85,16 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {/* Knowledge Graph / Memory Galaxy */}
+        {/* Knowledge Graph / Reflections */}
         {onOpenGraphExplorer && (
           <button
             id="header-graph-explorer-btn"
             onClick={onOpenGraphExplorer}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#161624] border border-[#2B2B3E] text-xs font-medium text-[#F3F0EB] hover:border-[#FF6B4A]/50 hover:bg-[#1E1E30] transition-all cursor-pointer"
-            title="Explore your memory galaxy — the knowledge graph Chronicle is building of you"
+            title="Reflections — the knowledge graph Chronicle is building of you"
           >
             <span>🕸️</span>
-            <span className="hidden md:inline">Memory Galaxy</span>
+            <span className="hidden md:inline">Reflections</span>
           </button>
         )}
 

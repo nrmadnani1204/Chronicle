@@ -1,4 +1,13 @@
-import type { GraphNode, GraphEdge, GraphNodeType, GraphEdgeRelation, MoodState } from '../types';
+import type {
+  GraphNode,
+  GraphEdge,
+  GraphNodeType,
+  GraphEdgeRelation,
+  MoodState,
+  ChronicleMemory,
+  MemoryCategory,
+} from '../types';
+import { normalizeText as normalizeLabel, textSimilarityScore } from './textSimilarity';
 
 const VALID_NODE_TYPES: GraphNodeType[] = [
   'session',
@@ -22,8 +31,31 @@ const VALID_RELATIONS: GraphEdgeRelation[] = [
   'similar_to',
 ];
 
-function normalizeLabel(label: string): string {
-  return label.trim().toLowerCase();
+// Searches for an existing node representing roughly the same thing as
+// `label`, before minting a new one — so a recurring topic (a person, a
+// goal, a like) referenced again in a future conversation gets found and
+// updated instead of duplicated. Exact-match first (fast path), then a
+// same-type fuzzy match (substring containment or significant word overlap).
+export function findSimilarGraphNode(
+  nodes: GraphNode[],
+  label: string,
+  type?: GraphNodeType
+): GraphNode | undefined {
+  const normTarget = normalizeLabel(label);
+  const exact = nodes.find((n) => normalizeLabel(n.label) === normTarget && (!type || n.type === type));
+  if (exact) return exact;
+
+  let best: GraphNode | undefined;
+  let bestScore = 0;
+  for (const n of nodes) {
+    if (type && n.type !== type) continue;
+    const score = textSimilarityScore(n.label, label);
+    if (score > bestScore) {
+      bestScore = score;
+      best = n;
+    }
+  }
+  return bestScore >= 0.5 ? best : undefined;
 }
 
 interface ExtractedNode {
@@ -73,7 +105,12 @@ export function applyExtractionToGraph(params: ApplyExtractionParams): ApplyExtr
     const label = en?.label?.trim();
     if (!label) continue;
     const norm = normalizeLabel(label);
-    const existing = labelToNode.get(norm);
+    const type = VALID_NODE_TYPES.includes(en.type as GraphNodeType) ? (en.type as GraphNodeType) : 'memory';
+
+    // Exact-label hit first (fast path), then fall back to fuzzy matching
+    // across everything resolved so far this batch — catches a recurring
+    // topic phrased slightly differently in a later conversation.
+    const existing = labelToNode.get(norm) ?? findSimilarGraphNode(Array.from(labelToNode.values()), label, type);
 
     if (existing) {
       const touched: GraphNode = {
@@ -81,12 +118,12 @@ export function applyExtractionToGraph(params: ApplyExtractionParams): ApplyExtr
         lastReferencedAt: now,
         referenceCount: (existing.referenceCount || 0) + 1,
       };
+      labelToNode.set(normalizeLabel(existing.label), touched);
       labelToNode.set(norm, touched);
       updatedNodes.push(touched);
       continue;
     }
 
-    const type = VALID_NODE_TYPES.includes(en.type as GraphNodeType) ? (en.type as GraphNodeType) : 'memory';
     const node: GraphNode = {
       id: `node_${now}_${Math.random().toString(36).slice(2, 8)}`,
       userId,
@@ -153,5 +190,57 @@ export function buildSessionNode(
     createdAt: existingNode?.createdAt ?? now,
     lastReferencedAt: now,
     referenceCount: (existingNode?.referenceCount ?? 0) + 1,
+  };
+}
+
+const CATEGORY_TO_NODE_TYPE: Record<MemoryCategory, GraphNodeType> = {
+  things_i_love: 'like',
+  who_im_becoming: 'aspiration',
+  happy_place: 'like',
+  little_things: 'like',
+  routine: 'activity',
+  where_i_am_now: 'memory',
+  general: 'memory',
+};
+
+// Manually-added memories (Memory Drawer, Happy Place, Little Things) skip
+// the LLM extraction pipeline entirely, so without this they'd never appear
+// in the knowledge graph. Searches existing nodes for a close match first
+// (e.g. adding "I really love cupcakes" after already having a "Loves
+// cupcakes" node) and updates that in place, rather than minting a new node
+// per memory unconditionally.
+export function resolveMemoryNode(
+  userId: string,
+  memory: ChronicleMemory,
+  existingNodes: GraphNode[]
+): GraphNode {
+  const now = Date.now();
+  const text = memory.text || '';
+  const label = text.length > 60 ? text.slice(0, 57) + '...' : text;
+  const type = CATEGORY_TO_NODE_TYPE[memory.category] || 'memory';
+
+  const match = findSimilarGraphNode(existingNodes, label, type);
+  if (match) {
+    return {
+      ...match,
+      lastReferencedAt: now,
+      referenceCount: (match.referenceCount || 0) + 1,
+      // Keep the richer text as the description if it didn't already have one.
+      description: match.description || (text.length > 60 ? text : undefined),
+    };
+  }
+
+  return {
+    id: `node_${now}_${Math.random().toString(36).slice(2, 8)}`,
+    userId,
+    type,
+    label,
+    description: text.length > 60 ? text : undefined,
+    sourceMemoryId: memory.id,
+    sourceSessionId: memory.sourceSessionId,
+    importance: memory.importance ?? 0.6,
+    createdAt: now,
+    lastReferencedAt: now,
+    referenceCount: 1,
   };
 }

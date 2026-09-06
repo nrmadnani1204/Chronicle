@@ -30,14 +30,44 @@ export const ThingsLyingAround: React.FC<ThingsLyingAroundProps> = ({
     };
   }, []);
 
-  // Chronicle's sticky notes that rotate or cycle
-  const chronicleStickyNotes = [
+  // Chronicle's sticky notes that rotate or cycle — generic by default, but
+  // once the user has told Chronicle enough (a handful of memories on
+  // record), a few notes get replaced with things pulled from their own
+  // memories so it feels increasingly specific to them rather than canned.
+  const genericStickyNotes = [
     { text: 'remember that thing you said you wanted to do? 👀', sub: 'Tuesday, 11:43 PM' },
     { text: 'hydrate.', sub: 'just saying.' },
     { text: "you've said 'I'll do it tomorrow' 4 times.", sub: 'unbiased witness 🫡' },
     { text: 'I found your villain origin story.', sub: 'tap to revisit' },
     { text: 'stop doomscrolling. talk to me or go to sleep.', sub: 'your 2 AM friend' },
   ];
+
+  const buildPersonalNoteText = (m: ChronicleMemory): string => {
+    switch (m.category) {
+      case 'who_im_becoming':
+        return `remember, you said: "${m.text}" 👀`;
+      case 'things_i_love':
+        return `you told me you love this: "${m.text}"`;
+      case 'happy_place':
+        return `your happy place: "${m.text}"`;
+      case 'little_things':
+        return `little thing you're holding onto: "${m.text}"`;
+      default:
+        return `you mentioned: "${m.text}"`;
+    }
+  };
+
+  const MEMORY_THRESHOLD = 3;
+  const personalizedNotes =
+    memories.length >= MEMORY_THRESHOLD
+      ? [...memories]
+          .sort((a, b) => b.importance - a.importance)
+          .slice(0, 4)
+          .map((m) => ({ text: buildPersonalNoteText(m), sub: 'from what you told me' }))
+      : [];
+
+  const chronicleStickyNotes =
+    personalizedNotes.length > 0 ? [...personalizedNotes, ...genericStickyNotes.slice(0, 2)] : genericStickyNotes;
 
   const toggleCassette = () => {
     chronicleAudio.playClick();
@@ -66,9 +96,29 @@ export const ThingsLyingAround: React.FC<ThingsLyingAroundProps> = ({
   const trajectoryMemory = memories.find((m) => m.type === 'trajectory' || m.category === 'who_im_becoming');
   const happyMemory = memories.find((m) => m.category === 'happy_place' || m.category === 'things_i_love');
 
-  // In Overwhelmed mood, the user specifically wants clutter stripped away
+  // In Overwhelmed mood, strip away the busier clutter but keep the one
+  // small, comforting note — it's grounding, not stimulating.
   if (moodPersonality === 'overwhelmed') {
-    return null;
+    const note = chronicleStickyNotes[activeNoteIdx % chronicleStickyNotes.length];
+    return (
+      <div id="things-lying-around" className="w-full max-w-sm mx-auto mt-6 px-4 pb-16 select-none">
+        <div className="relative group rotate-1 hover:rotate-0 transition-transform duration-300">
+          <div
+            onClick={handleNextSticky}
+            className="bg-[#FFE57F] text-[#1E1E1E] p-4 rounded-xs shadow-md cursor-pointer hover:shadow-xl transition-all relative"
+          >
+            <div className="flex items-center justify-between text-[10px] font-mono text-[#6A6040] mb-2 uppercase tracking-wider">
+              <span>Chronicle note</span>
+              <span className="font-hand text-xs font-bold">tap to flip &rarr;</span>
+            </div>
+            <p className="font-hand text-2xl font-bold text-[#1F1C12] leading-tight mb-2">
+              &ldquo;{note.text}&rdquo;
+            </p>
+            <p className="text-[10px] font-mono text-[#574F34] text-right">&mdash; {note.sub}</p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -241,10 +291,10 @@ export const ThingsLyingAround: React.FC<ThingsLyingAroundProps> = ({
               <span className="font-hand text-xs font-bold">tap to flip &rarr;</span>
             </div>
             <p className="font-hand text-2xl font-bold text-[#1F1C12] leading-tight mb-2">
-              &ldquo;{chronicleStickyNotes[activeNoteIdx].text}&rdquo;
+              &ldquo;{chronicleStickyNotes[activeNoteIdx % chronicleStickyNotes.length].text}&rdquo;
             </p>
             <p className="text-[10px] font-mono text-[#574F34] text-right">
-              &mdash; {chronicleStickyNotes[activeNoteIdx].sub}
+              &mdash; {chronicleStickyNotes[activeNoteIdx % chronicleStickyNotes.length].sub}
             </p>
           </div>
         </div>

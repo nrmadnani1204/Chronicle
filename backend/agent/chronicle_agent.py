@@ -10,10 +10,13 @@ def build_chronicle_agent(
     instruction: str,
     memories: list[Any],
     graph_context: Optional[list[Any]] = None,
+    people: Optional[list[Any]] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
 ) -> LlmAgent:
     return LlmAgent(
         name="chronicle_companion",
         model=model,
         instruction=instruction,
-        tools=build_tools(memories, graph_context),
+        tools=build_tools(memories, graph_context, people, latitude, longitude),
     )
