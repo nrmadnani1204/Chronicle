@@ -567,7 +567,7 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
               you seem a little
             </h2>
             <p className="font-mono text-lg sm:text-xl text-[#FF6B4A] font-bold">
-              fucked today
+              moody today
             </p>
           </div>
         );

@@ -115,8 +115,12 @@ app.post("/api/chronicle/judge-memory-duplicates", (req, res) => proxyToPython("
 // internet-facing edge, so the shared-secret check happens here, not in
 // Python — the sidecar trusts that this check already ran.
 app.post("/internal/weekly-digest", (req, res) => {
-  const provided = req.header("X-Internal-Secret");
-  const expected = process.env.INTERNAL_DIGEST_SECRET;
+  const provided = req.header("X-Internal-Secret")?.trim();
+  // Secret Manager values are easy to accidentally create with a trailing
+  // newline (e.g. `echo "x" | gcloud secrets versions add ...`) — an HTTP
+  // header can never carry that literal newline, so an untrimmed comparison
+  // would reject every request forever even with the "correct" secret.
+  const expected = process.env.INTERNAL_DIGEST_SECRET?.trim();
   if (!expected || provided !== expected) {
     return res.status(401).json({ error: "Unauthorized." });
   }
@@ -147,9 +151,30 @@ async function start() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    // Vite's JS/CSS chunks are content-hashed (a new build gets new
+    // filenames), so they're safe to cache forever — but index.html always
+    // keeps the same filename while pointing at whichever hashes are
+    // current, so it must always be revalidated. Without this split, a
+    // browser can hold onto a stale index.html referencing chunk hashes that
+    // no longer exist on a newer (or rolled-back) revision, breaking the app
+    // until a hard refresh.
+    app.use(
+      express.static(distPath, {
+        index: false,
+        setHeaders: (res, filePath) => {
+          res.setHeader(
+            "Cache-Control",
+            filePath.endsWith("index.html") ? "no-cache" : "public, max-age=31536000, immutable"
+          );
+        },
+      })
+    );
     app.get("*", (_req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      // sendFile() sets its own default Cache-Control (public, max-age=0)
+      // that overrides a header set beforehand — cacheControl: false hands
+      // control back to us so "no-cache" (always revalidate) actually sticks.
+      res.setHeader("Cache-Control", "no-cache");
+      res.sendFile(path.join(distPath, "index.html"), { cacheControl: false });
     });
   }
 
