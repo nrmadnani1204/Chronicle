@@ -19,8 +19,17 @@ import {
   orderBy,
   onSnapshot,
 } from 'firebase/firestore';
-import type { JournalInteraction, ChronicleMemory, UserProfile } from './types';
-import firebaseConfig from '../firebase-applet-config.json';
+import type { JournalInteraction, ChronicleMemory, GraphNode, GraphEdge, UserProfile } from './types';
+import firebaseAppletConfig from '../firebase-applet-config.json';
+
+// apiKey is sourced from VITE_FIRESTORE_API_KEY (not the committed JSON file) —
+// a Firestore/Firebase-scoped key, unrelated to Gemini auth (server-side
+// Gemini calls go through Vertex AI + Application Default Credentials, not
+// an API key at all — see backend/config.py).
+const firebaseConfig = {
+  ...firebaseAppletConfig,
+  apiKey: import.meta.env.VITE_FIRESTORE_API_KEY || firebaseAppletConfig.apiKey,
+};
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -169,5 +178,73 @@ export function subscribeToUserMemories(
       onError(err);
     }
   );
+}
+
+// User-Isolated Knowledge Graph: /users/{userId}/graph_nodes, /graph_edges
+export function getGraphNodesCollection(userId: string) {
+  if (!userId) throw new Error('User ID is required.');
+  return collection(db, 'users', userId, 'graph_nodes');
+}
+
+export function getGraphEdgesCollection(userId: string) {
+  if (!userId) throw new Error('User ID is required.');
+  return collection(db, 'users', userId, 'graph_edges');
+}
+
+export async function saveGraphNode(userId: string, node: GraphNode): Promise<void> {
+  if (!userId) throw new Error('User is not authenticated.');
+  const docRef = doc(db, 'users', userId, 'graph_nodes', node.id);
+  await setDoc(docRef, sanitizeForFirestore(node), { merge: true });
+}
+
+export async function saveGraphEdge(userId: string, edge: GraphEdge): Promise<void> {
+  if (!userId) throw new Error('User is not authenticated.');
+  const docRef = doc(db, 'users', userId, 'graph_edges', edge.id);
+  await setDoc(docRef, sanitizeForFirestore(edge), { merge: true });
+}
+
+// Subscribes to both graph collections and merges updates into one callback,
+// mirroring subscribeToUserMemories/subscribeToUserInteractions.
+export function subscribeToUserGraph(
+  userId: string,
+  onUpdate: (nodes: GraphNode[], edges: GraphEdge[]) => void,
+  onError: (error: Error) => void
+) {
+  if (!userId) {
+    onUpdate([], []);
+    return () => {};
+  }
+
+  let latestNodes: GraphNode[] = [];
+  let latestEdges: GraphEdge[] = [];
+
+  const unsubNodes = onSnapshot(
+    query(getGraphNodesCollection(userId), orderBy('lastReferencedAt', 'desc')),
+    (snapshot) => {
+      latestNodes = snapshot.docs.map((docSnap) => docSnap.data() as GraphNode);
+      onUpdate(latestNodes, latestEdges);
+    },
+    (err) => {
+      console.error('Firestore graph_nodes subscription error:', err);
+      onError(err);
+    }
+  );
+
+  const unsubEdges = onSnapshot(
+    query(getGraphEdgesCollection(userId), orderBy('createdAt', 'desc')),
+    (snapshot) => {
+      latestEdges = snapshot.docs.map((docSnap) => docSnap.data() as GraphEdge);
+      onUpdate(latestNodes, latestEdges);
+    },
+    (err) => {
+      console.error('Firestore graph_edges subscription error:', err);
+      onError(err);
+    }
+  );
+
+  return () => {
+    unsubNodes();
+    unsubEdges();
+  };
 }
 

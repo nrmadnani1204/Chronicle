@@ -7,5 +7,13 @@ service cloud.firestore {
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+    // Explicit knowledge-graph rules (defense-in-depth — already covered by
+    // the wildcard rule above, kept for clarity and future field validation).
+    match /users/{userId}/graph_nodes/{nodeId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /users/{userId}/graph_edges/{edgeId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
   }
 }

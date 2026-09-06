@@ -8,27 +8,35 @@ import {
   saveMemory,
   deleteMemory,
   subscribeToUserMemories,
+  saveGraphNode,
+  saveGraphEdge,
+  subscribeToUserGraph,
 } from './firebase';
 import { LandingPage } from './components/LandingPage';
 import { Header } from './components/Header';
 import { AtmosphereBar } from './components/AtmosphereBar';
 import { JournalStudio } from './components/JournalStudio';
 import { MemoryDrawer } from './components/MemoryDrawer';
-import { WeeklyReceiptsModal } from './components/WeeklyReceiptsModal';
 import { HappyPlaceModal } from './components/HappyPlaceModal';
-import type { JournalInteraction, ChronicleMemory, MoodState } from './types';
+import { LittleThingsModal } from './components/LittleThingsModal';
+import { GraphExplorerPage } from './components/GraphExplorerPage';
+import { MoodBackground } from './components/MoodBackground';
+import type { JournalInteraction, ChronicleMemory, MoodState, GraphNode, GraphEdge } from './types';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [interactions, setInteractions] = useState<JournalInteraction[]>([]);
   const [memories, setMemories] = useState<ChronicleMemory[]>([]);
+  const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
+  const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   // Modals & Drawers state
   const [isMemoryDrawerOpen, setIsMemoryDrawerOpen] = useState(false);
-  const [isWeeklyReceiptsOpen, setIsWeeklyReceiptsOpen] = useState(false);
   const [isHappyPlaceOpen, setIsHappyPlaceOpen] = useState(false);
+  const [isLittleThingsOpen, setIsLittleThingsOpen] = useState(false);
+  const [isGraphExplorerOpen, setIsGraphExplorerOpen] = useState(false);
 
   // Subscribe to Firebase Authentication state
   useEffect(() => {
@@ -83,6 +91,28 @@ export default function App() {
     return () => unsubscribe();
   }, [currentUser]);
 
+  // Subscribe to user's knowledge graph
+  useEffect(() => {
+    if (!currentUser) {
+      setGraphNodes([]);
+      setGraphEdges([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToUserGraph(
+      currentUser.uid,
+      (nodes, edges) => {
+        setGraphNodes(nodes);
+        setGraphEdges(edges);
+      },
+      (error) => {
+        console.error('Graph subscription error:', error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [currentUser]);
+
   // Handle saving an interaction
   const handleSaveInteraction = async (interaction: JournalInteraction) => {
     if (!currentUser) throw new Error('User is not authenticated.');
@@ -118,6 +148,17 @@ export default function App() {
     await deleteMemory(currentUser.uid, memoryId);
   };
 
+  // Knowledge graph handlers
+  const handleSaveGraphNode = async (node: GraphNode) => {
+    if (!currentUser) return;
+    await saveGraphNode(currentUser.uid, { ...node, userId: currentUser.uid });
+  };
+
+  const handleSaveGraphEdge = async (edge: GraphEdge) => {
+    if (!currentUser) return;
+    await saveGraphEdge(currentUser.uid, { ...edge, userId: currentUser.uid });
+  };
+
   const handleAddHappyPlace = async (text: string) => {
     if (!currentUser) return;
     const mem: ChronicleMemory = {
@@ -127,6 +168,25 @@ export default function App() {
       category: 'happy_place',
       type: 'semantic',
       importance: 0.9,
+      createdAt: Date.now(),
+    };
+    await saveMemory(currentUser.uid, mem);
+  };
+
+  const handleRevisitSession = (interactionId: string) => {
+    setActiveId(interactionId);
+    setIsGraphExplorerOpen(false);
+  };
+
+  const handleAddLittleThing = async (text: string) => {
+    if (!currentUser) return;
+    const mem: ChronicleMemory = {
+      id: `mem_little_${Date.now()}`,
+      userId: currentUser.uid,
+      text,
+      category: 'little_things',
+      type: 'semantic',
+      importance: 0.6,
       createdAt: Date.now(),
     };
     await saveMemory(currentUser.uid, mem);
@@ -157,8 +217,18 @@ export default function App() {
   // Infer latest emotional weather from most recent interaction that has mood
   const latestMoodWithWeather = interactions.find((i) => i.mood?.weather)?.mood || null;
 
+  // Recency-ordered mood trajectory (interactions are already sorted desc by
+  // updatedAt) — drives the mood-adaptive background's continuous blending,
+  // reflecting the last several sessions rather than only the latest one.
+  const recentMoodTrajectory = interactions
+    .filter((i) => i.mood)
+    .slice(0, 5)
+    .map((i) => i.mood!);
+
   return (
     <div className="min-h-screen bg-[#08080E] text-[#F3F0EB] flex flex-col font-sans selection:bg-[#FF6B4A]/30">
+      <MoodBackground mood={latestMoodWithWeather} trajectory={recentMoodTrajectory} />
+
       {/* Header */}
       <Header
         user={currentUser}
@@ -166,8 +236,9 @@ export default function App() {
         memoryCount={memories.length}
         onNewVentSession={() => setActiveId(null)}
         onOpenMemoryDrawer={() => setIsMemoryDrawerOpen(true)}
-        onOpenWeeklyReceipts={() => setIsWeeklyReceiptsOpen(true)}
         onOpenHappyPlace={() => setIsHappyPlaceOpen(true)}
+        onOpenLittleThings={() => setIsLittleThingsOpen(true)}
+        onOpenGraphExplorer={() => setIsGraphExplorerOpen(true)}
       />
 
       {/* Emotive UI Atmosphere Bar */}
@@ -177,7 +248,7 @@ export default function App() {
       />
 
       {/* Main Studio — Conversational-first Sanctuary Layout */}
-      <div className="flex-1 flex relative overflow-hidden bg-[#09090E]">
+      <div className="flex-1 flex relative overflow-hidden">
         {/* Main Conversation Studio with Vent Button at Center */}
         <JournalStudio
           interaction={activeInteraction}
@@ -185,10 +256,14 @@ export default function App() {
           userId={currentUser.uid}
           memories={memories}
           onSaveMemory={handleSaveMemory}
+          graphNodes={graphNodes}
+          graphEdges={graphEdges}
+          onSaveGraphNode={handleSaveGraphNode}
+          onSaveGraphEdge={handleSaveGraphEdge}
           allPastSessions={interactions}
           onOpenMemoryDrawer={() => setIsMemoryDrawerOpen(true)}
-          onOpenWeeklyReceipts={() => setIsWeeklyReceiptsOpen(true)}
           onOpenHappyPlace={() => setIsHappyPlaceOpen(true)}
+          onOpenLittleThings={() => setIsLittleThingsOpen(true)}
           onNewVentSession={() => setActiveId(null)}
         />
       </div>
@@ -202,19 +277,30 @@ export default function App() {
         onDeleteMemory={handleDeleteMemory}
       />
 
-      <WeeklyReceiptsModal
-        isOpen={isWeeklyReceiptsOpen}
-        onClose={() => setIsWeeklyReceiptsOpen(false)}
-        interactions={interactions}
-        userEmail={currentUser.email}
-      />
-
       <HappyPlaceModal
         isOpen={isHappyPlaceOpen}
         onClose={() => setIsHappyPlaceOpen(false)}
         memories={memories}
         onAddHappyPlace={handleAddHappyPlace}
       />
+
+      <LittleThingsModal
+        isOpen={isLittleThingsOpen}
+        onClose={() => setIsLittleThingsOpen(false)}
+        memories={memories}
+        onAddLittleThing={handleAddLittleThing}
+        onDeleteLittleThing={handleDeleteMemory}
+      />
+
+      {isGraphExplorerOpen && (
+        <GraphExplorerPage
+          nodes={graphNodes}
+          edges={graphEdges}
+          interactions={interactions}
+          onClose={() => setIsGraphExplorerOpen(false)}
+          onRevisitSession={handleRevisitSession}
+        />
+      )}
     </div>
   );
 }

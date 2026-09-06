@@ -127,7 +127,10 @@ export const VentButton: React.FC<VentButtonProps> = ({
     } catch {}
     setIsListening(false);
 
-    const fullResult = (finalTranscriptAccumulator.current + ' ' + liveTranscript).trim();
+    // liveTranscript is already finalTranscriptAccumulator + interim text (see
+    // onresult) — do not prepend the accumulator again here, or every word
+    // gets duplicated in the submitted transcript.
+    const fullResult = liveTranscript.trim();
     if (fullResult) {
       onTranscriptComplete(fullResult);
       finalTranscriptAccumulator.current = '';

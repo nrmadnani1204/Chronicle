@@ -7,10 +7,11 @@ export type ChronicleMoodPersonality = 'midnight' | 'angry' | 'heavy' | 'happy' 
 interface RoomNavigationProps {
   onOpenLittleThings: () => void;
   onOpenHappyPlace: () => void;
-  onOpenWeeklyReceipts: () => void;
   onOpenMemoryDrawer: () => void;
   currentMood: ChronicleMoodPersonality;
   onSelectMood: (mood: ChronicleMoodPersonality) => void;
+  isAutoMode?: boolean;
+  onClearOverride?: () => void;
   onNewVentSession: () => void;
   isSessionActive: boolean;
 }
@@ -18,10 +19,11 @@ interface RoomNavigationProps {
 export const RoomNavigation: React.FC<RoomNavigationProps> = ({
   onOpenLittleThings,
   onOpenHappyPlace,
-  onOpenWeeklyReceipts,
   onOpenMemoryDrawer,
   currentMood,
   onSelectMood,
+  isAutoMode = false,
+  onClearOverride,
   onNewVentSession,
   isSessionActive,
 }) => {
@@ -33,6 +35,11 @@ export const RoomNavigation: React.FC<RoomNavigationProps> = ({
   const handleMoodSwitch = (mood: ChronicleMoodPersonality) => {
     chronicleAudio.playClick();
     onSelectMood(mood);
+  };
+
+  const handleClearOverride = () => {
+    chronicleAudio.playClick();
+    onClearOverride?.();
   };
 
   return (
@@ -69,16 +76,6 @@ export const RoomNavigation: React.FC<RoomNavigationProps> = ({
           <span>the vault</span>
         </button>
 
-        {/* 💀 Weekly Evidence Receipt */}
-        <button
-          onClick={() => handleItemClick(onOpenWeeklyReceipts)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#12121D] border border-[#26263A] text-[#A09CB2] hover:text-[#F3F0EB] hover:border-indigo-400/40 transition-all cursor-pointer"
-          title="Weekly meme evidence recap"
-        >
-          <span className="text-sm">💀</span>
-          <span>weekly receipt</span>
-        </button>
-
         {/* + Fresh Vent Session (if currently in an active dialogue) */}
         {isSessionActive && (
           <button
@@ -96,6 +93,21 @@ export const RoomNavigation: React.FC<RoomNavigationProps> = ({
         <span className="text-[#6E6A7D] text-[10px] uppercase tracking-wider px-2 hidden sm:inline">
           Mood:
         </span>
+
+        {onClearOverride && (
+          <button
+            onClick={handleClearOverride}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+              isAutoMode
+                ? 'bg-[#1E1E2E] text-[#FF6B4A] border border-[#FF6B4A]/40'
+                : 'text-[#8E8A9F] hover:text-[#FF6B4A]'
+            }`}
+            title="Let Chronicle auto-detect your mood from recent sessions"
+          >
+            <span>🪄</span>
+            <span className="hidden md:inline">Auto</span>
+          </button>
+        )}
 
         <button
           onClick={() => handleMoodSwitch('midnight')}

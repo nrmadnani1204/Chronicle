@@ -9,9 +9,9 @@ interface HeaderProps {
   entriesCount: number;
   memoryCount: number;
   onOpenMemoryDrawer: () => void;
-  onOpenWeeklyReceipts: () => void;
   onOpenHappyPlace: () => void;
   onOpenLittleThings?: () => void;
+  onOpenGraphExplorer?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,9 +19,9 @@ export const Header: React.FC<HeaderProps> = ({
   onNewVentSession,
   memoryCount,
   onOpenMemoryDrawer,
-  onOpenWeeklyReceipts,
   onOpenHappyPlace,
   onOpenLittleThings,
+  onOpenGraphExplorer,
 }) => {
   return (
     <header className="h-16 border-b border-[#232336] bg-[#0C0C14]/90 backdrop-blur-md sticky top-0 z-30 px-3 sm:px-6 flex items-center justify-between transition-colors">
@@ -85,6 +85,19 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
+        {/* Knowledge Graph / Memory Galaxy */}
+        {onOpenGraphExplorer && (
+          <button
+            id="header-graph-explorer-btn"
+            onClick={onOpenGraphExplorer}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#161624] border border-[#2B2B3E] text-xs font-medium text-[#F3F0EB] hover:border-[#FF6B4A]/50 hover:bg-[#1E1E30] transition-all cursor-pointer"
+            title="Explore your memory galaxy — the knowledge graph Chronicle is building of you"
+          >
+            <span>🕸️</span>
+            <span className="hidden md:inline">Memory Galaxy</span>
+          </button>
+        )}
+
         {/* Happy Place / Comfort Protocol */}
         <button
           id="header-happy-place-btn"
@@ -94,17 +107,6 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Heart className="w-3.5 h-3.5 text-rose-400" />
           <span className="hidden md:inline">Happy Place</span>
-        </button>
-
-        {/* Weekly Receipts Button */}
-        <button
-          id="header-weekly-receipts-btn"
-          onClick={onOpenWeeklyReceipts}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#161624] border border-[#2B2B3E] text-xs font-medium text-[#F3F0EB] hover:border-[#FF6B4A]/50 hover:bg-[#1E1E30] transition-all cursor-pointer"
-          title="Chronicle has reviewed the evidence 💀"
-        >
-          <span>💀</span>
-          <span className="hidden md:inline">Receipts</span>
         </button>
 
         {/* User profile badge */}

@@ -7,7 +7,6 @@ import { sparksRainPlayer } from '../utils/sparksRainPlayer';
 interface ThingsLyingAroundProps {
   memories: ChronicleMemory[];
   onOpenHappyPlace: () => void;
-  onOpenWeeklyReceipts: () => void;
   onOpenMemoryDrawer: () => void;
   onOpenLittleThings?: () => void;
   moodPersonality: 'angry' | 'heavy' | 'happy' | 'overwhelmed' | 'midnight';
@@ -16,7 +15,6 @@ interface ThingsLyingAroundProps {
 export const ThingsLyingAround: React.FC<ThingsLyingAroundProps> = ({
   memories,
   onOpenHappyPlace,
-  onOpenWeeklyReceipts,
   onOpenMemoryDrawer,
   onOpenLittleThings,
   moodPersonality,
@@ -267,28 +265,19 @@ export const ThingsLyingAround: React.FC<ThingsLyingAroundProps> = ({
           </div>
         </div>
 
-        {/* Artifact 6: 💀 Weekly Meme Evidence link */}
+        {/* Artifact 6: 💀 Weekly Meme Evidence — now a Sunday email, not a tap-through */}
         <div className="relative group rotate-1 hover:rotate-0 transition-transform duration-300">
-          <div
-            onClick={onOpenWeeklyReceipts}
-            className="bg-[#1A1A28] border border-[#3E3E58] p-4 rounded-xl shadow-lg cursor-pointer hover:border-[#FF6B4A] transition-colors"
-          >
+          <div className="bg-[#1A1A28] border border-[#3E3E58] p-4 rounded-xl shadow-lg">
             <div className="flex items-center justify-between text-[10px] font-mono text-[#A09CB2] mb-1.5 uppercase">
               <span>chronicle.exe</span>
-              <span className="text-rose-400 font-bold">RAW RECEIPT</span>
+              <span className="text-rose-400 font-bold">SUNDAY DROP</span>
             </div>
-            <p className="font-mono text-xs text-[#F3F0EB] leading-relaxed mb-2 font-semibold">
-              YOUR WEEK: <br />
-              <span className="text-[#FF6B4A]">█████████</span> chaos <br />
-              <span className="text-emerald-400">████</span> recovery
-            </p>
-            <p className="font-hand text-lg text-[#FF9E80] leading-snug">
+            <p className="font-hand text-lg text-[#FF9E80] leading-snug mb-2">
               &ldquo;bro really thought Thursday was going to be normal&rdquo;
             </p>
-            <div className="mt-2 pt-2 border-t border-white/5 text-[10px] font-mono text-[#8E8A9F] flex items-center justify-between">
-              <span>tap to view & email</span>
-              <span className="text-[#FF6B4A]">&rarr;</span>
-            </div>
+            <p className="text-xs text-[#8E8A9F] font-sans">
+              Your weekly recap now arrives by email every Sunday — no need to come looking for it.
+            </p>
           </div>
         </div>
 

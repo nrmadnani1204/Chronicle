@@ -14,8 +14,8 @@ All reflections and multi-turn conversations are strictly isolated per user in C
 | **Backend API** | Node.js Express & `@google/genai` | Top-level deserialization, defensive payload ingestion, model fallback ladder |
 | **Authentication** | Firebase Authentication (Google Sign-In) | Passwordless federated identity management |
 | **Database** | Cloud Firestore | User-isolated persistence for journal turns and summaries |
-| **AI Engine** | Gemini 3.6 Flash (`@google/genai`) | Empathetic mirroring, executive summaries, brainstorming, and multi-turn dialogue |
-| **Secret Management** | Google Cloud Secret Manager | API key injection without client exposure |
+| **AI Engine** | Gemini (via Vertex AI, `google-genai` Python SDK + Google ADK) | Empathetic mirroring, memory extraction, and multi-turn dialogue |
+| **Gemini Auth** | Vertex AI + Application Default Credentials (ADC) | No API key at all — local `gcloud auth application-default login`, production via the Cloud Run service account |
 
 ---
 
@@ -45,22 +45,22 @@ All reflections and multi-turn conversations are strictly isolated per user in C
 
 ---
 
-## 2. Secret Management Setup
+## 2. Gemini Authentication (Vertex AI + ADC — no API key)
 
-Gemini API keys must be securely stored in **Google Cloud Secret Manager** and accessed exclusively by the server runtime:
+Gemini access goes through **Vertex AI with Application Default Credentials**, not an AI Studio API key. There is no secret to create or inject.
 
+**Local development** — one-time login, ADC is cached to your machine:
 ```bash
-# Create and populate the secret
-gcloud secrets create GEMINI_API_KEY --replication-policy="automatic"
-echo -n "YOUR_API_KEY" | gcloud secrets versions add GEMINI_API_KEY --data-file=-
+gcloud auth application-default login
+```
 
-# Obtain project number
+**Production (Cloud Run)** — grant the service's runtime service account permission to call Vertex AI; ADC is then supplied automatically via the metadata server, no credentials file involved:
+```bash
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
 
-# Grant the default Cloud Run service account access to read the secret
-gcloud secrets add-iam-policy-binding GEMINI_API_KEY \
+gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
+  --role="roles/aiplatform.user"
 ```
 
 ---
@@ -99,13 +99,68 @@ gcloud run deploy $SERVICE_NAME \
   --region $REGION \
   --platform managed \
   --allow-unauthenticated \
-  --set-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest" \
+  --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global" \
   --port 3000
 ```
 
 ---
 
-## 5. Required Campaign Labeling (Verification Binding)
+## 5. Weekly Gmail Digest (Cloud Scheduler)
+
+Every Sunday, Chronicle emails each active user a personalized, funny recap of their week — generated from their actual sessions and knowledge-graph highlights, never a generic "insights" report. This is a background job (`POST /internal/weekly-digest`), not something the user triggers from the UI.
+
+**5.1 — Enable APIs**:
+```bash
+gcloud services enable gmail.googleapis.com cloudscheduler.googleapis.com
+```
+
+**5.2 — Create OAuth credentials for the sending account** (a dedicated Gmail account, not any user's own inbox):
+1. Google Cloud Console → APIs & Services → Credentials → Create Credentials → OAuth client ID → **Desktop app**. Download the client secret JSON.
+2. Run the one-time local setup script, signing in as the dedicated sending account when the browser opens:
+   ```bash
+   uv run python scripts/gmail_oauth_setup.py path/to/client_secret.json
+   ```
+3. Copy the printed values into your local `.env` (see `.env.example`) and into Secret Manager for production. **Never commit or paste these values anywhere else** — they're equivalent to that account's password for sending mail.
+
+**5.3 — Grant the Firestore-read + Auth-admin IAM role** the digest job needs to enumerate users and their recent sessions:
+```bash
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/datastore.viewer"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/firebaseauth.viewer"
+```
+
+**5.4 — Store the Gmail + internal-secret values in Secret Manager**, then deploy with them (in addition to the Vertex AI env vars from section 2):
+```bash
+gcloud run deploy $SERVICE_NAME \
+  --update-secrets="GMAIL_OAUTH_CLIENT_ID=GMAIL_OAUTH_CLIENT_ID:latest,GMAIL_OAUTH_CLIENT_SECRET=GMAIL_OAUTH_CLIENT_SECRET:latest,GMAIL_OAUTH_REFRESH_TOKEN=GMAIL_OAUTH_REFRESH_TOKEN:latest,GMAIL_SENDER_ADDRESS=GMAIL_SENDER_ADDRESS:latest,INTERNAL_DIGEST_SECRET=INTERNAL_DIGEST_SECRET:latest"
+```
+
+**5.5 — Create the Cloud Scheduler job** pointed at your deployed service:
+```bash
+gcloud scheduler jobs create http chronicle-weekly-digest \
+  --schedule="0 20 * * 0" \
+  --uri="https://<cloud-run-url>/internal/weekly-digest" \
+  --http-method=POST \
+  --headers="X-Internal-Secret=$INTERNAL_DIGEST_SECRET" \
+  --time-zone="America/Los_Angeles"
+```
+
+Trigger it manually to test end-to-end: `gcloud scheduler jobs run chronicle-weekly-digest`.
+
+*Production hardening (recommended over the shared-secret header above): use a Cloud Scheduler OIDC token with a dedicated invoker service account instead, verified in FastAPI via `google.auth.transport` — the shared secret is the simpler thing to ship first.*
+
+**Local testing** — set `DIGEST_DRY_RUN=true` in `.env` (default in `.env.example`) so the job logs the rendered email instead of calling Gmail:
+```bash
+curl -X POST http://localhost:3000/internal/weekly-digest -H "X-Internal-Secret: $INTERNAL_DIGEST_SECRET"
+```
+
+---
+
+## 6. Required Campaign Labeling (Verification Binding)
 
 Apply the mandatory challenge verification label to your deployed Cloud Run service:
 
@@ -117,16 +172,16 @@ gcloud run services update $SERVICE_NAME \
 
 ---
 
-## 6. Local Development
+## 7. Local Development
 
 1. Ensure dependencies are installed:
    ```bash
    npm install
    ```
 
-2. Configure environment variables in `.env`:
+2. Configure environment variables in `.env` (see `.env.example`) and authenticate ADC once:
    ```bash
-   GEMINI_API_KEY="your-gemini-api-key"
+   gcloud auth application-default login
    ```
 
 3. Run the development server (Express + Vite on port 3000):
@@ -142,7 +197,7 @@ gcloud run services update $SERVICE_NAME \
 
 ---
 
-## 7. Functional Stability & End-to-End Walkthrough Test Cases
+## 8. Functional Stability & End-to-End Walkthrough Test Cases
 
 Every user interaction has a corresponding test case:
 

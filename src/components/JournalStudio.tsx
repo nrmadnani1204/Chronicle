@@ -14,12 +14,16 @@ import { VentButton } from './VentButton';
 import { ThingsLyingAround } from './ThingsLyingAround';
 import { RoomNavigation, type ChronicleMoodPersonality } from './RoomNavigation';
 import { chronicleAudio } from '../utils/audioFeedback';
+import { applyExtractionToGraph, buildSessionNode } from '../utils/graphSync';
+import { deriveMoodPersonality } from '../utils/moodPalette';
 import type {
   JournalInteraction,
   JournalMessage,
   ConversationMode,
   ChronicleMemory,
   MoodState,
+  GraphNode,
+  GraphEdge,
 } from '../types';
 
 interface JournalStudioProps {
@@ -28,9 +32,12 @@ interface JournalStudioProps {
   userId: string;
   memories: ChronicleMemory[];
   onSaveMemory: (memory: ChronicleMemory) => Promise<void>;
+  graphNodes?: GraphNode[];
+  graphEdges?: GraphEdge[];
+  onSaveGraphNode?: (node: GraphNode) => Promise<void>;
+  onSaveGraphEdge?: (edge: GraphEdge) => Promise<void>;
   allPastSessions?: JournalInteraction[];
   onOpenMemoryDrawer?: () => void;
-  onOpenWeeklyReceipts?: () => void;
   onOpenHappyPlace?: () => void;
   onOpenLittleThings?: () => void;
   onNewVentSession?: () => void;
@@ -42,9 +49,12 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
   userId,
   memories,
   onSaveMemory,
+  graphNodes = [],
+  graphEdges = [],
+  onSaveGraphNode = async () => {},
+  onSaveGraphEdge = async () => {},
   allPastSessions = [],
   onOpenMemoryDrawer = () => {},
-  onOpenWeeklyReceipts = () => {},
   onOpenHappyPlace = () => {},
   onOpenLittleThings = () => {},
   onNewVentSession = () => {},
@@ -60,7 +70,15 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
   const [customTitle, setCustomTitle] = useState(interaction?.title || '');
   const [voicePlaybackEnabled, setVoicePlaybackEnabled] = useState(true);
   const [showTextFallback, setShowTextFallback] = useState(false);
-  const [moodPersonality, setMoodPersonality] = useState<ChronicleMoodPersonality>('midnight');
+  // Mood personality is derived from numeric mood (this session's, or the
+  // most recent past session's if none is active yet) — manualOverride lets
+  // the user explicitly force a tone via RoomNavigation, taking precedence
+  // until cleared back to "auto".
+  const [manualOverride, setManualOverride] = useState<ChronicleMoodPersonality | null>(null);
+  const currentMoodState: MoodState | null =
+    interaction?.mood || allPastSessions.find((s) => s.mood)?.mood || null;
+  const derivedMoodPersonality = deriveMoodPersonality(currentMoodState);
+  const moodPersonality = manualOverride ?? derivedMoodPersonality;
   const [newlyExtractedMemories, setNewlyExtractedMemories] = useState<ChronicleMemory[]>([]);
 
   // Live real-time clock (e.g. 11:47 pm)
@@ -170,6 +188,14 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
           mood: s.mood?.weather,
         }));
 
+      // Most-referenced, non-session graph nodes give the agent's tools richer,
+      // structured context beyond the flat memory text list.
+      const graphContext = [...graphNodes]
+        .filter((n) => n.type !== 'session')
+        .sort((a, b) => b.referenceCount - a.referenceCount)
+        .slice(0, 20)
+        .map((n) => (n.description ? `${n.label}: ${n.description}` : n.label));
+
       const res = await fetch('/api/chronicle/respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -178,6 +204,7 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
           mode: selectedMode,
           history: existingMessages,
           memories: memories.map((m) => m.text),
+          graphContext,
           pastSessions: formattedPast,
           tone: moodPersonality === 'angry' ? 'roast' : moodPersonality === 'heavy' ? 'gentle' : 'friend',
         }),
@@ -224,6 +251,16 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
       await onSaveInteraction(updatedInteraction);
       setInputText('');
 
+      // 2b. Deterministic graph sync — always creates/updates a session node,
+      // independent of any LLM call, so the graph stays populated even when
+      // Gemini extraction is degraded or offline.
+      try {
+        const existingSessionNode = graphNodes.find((n) => n.id === `node_session_${interactionId}`);
+        await onSaveGraphNode(buildSessionNode(userId, updatedInteraction, existingSessionNode));
+      } catch (graphErr) {
+        console.warn('Session graph node sync non-blocking error:', graphErr);
+      }
+
       // 3. Asynchronous memory extraction & title update
       (async () => {
         try {
@@ -234,7 +271,10 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
           const extractRes = await fetch('/api/chronicle/extract-memory', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionText: fullSessionText }),
+            body: JSON.stringify({
+              sessionText: fullSessionText,
+              graphNodeLabels: graphNodes.map((n) => n.label),
+            }),
           });
 
           const extractData = await extractRes.json();
@@ -261,6 +301,28 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
               setNewlyExtractedMemories((prev) => [...prev, ...addedMemories]);
             }
 
+            // Knowledge graph sync from the LLM's extracted nodes/edges (or
+            // the deterministic fallback's trivial ones), linked against the
+            // graph state already known to this client.
+            try {
+              const { updatedNodes, newEdges } = applyExtractionToGraph({
+                userId,
+                existingNodes: graphNodes,
+                existingEdges: graphEdges,
+                extractedNodes: Array.isArray(extractData.nodes) ? extractData.nodes : [],
+                extractedEdges: Array.isArray(extractData.edges) ? extractData.edges : [],
+                sourceSessionId: interactionId,
+              });
+              for (const node of updatedNodes) {
+                await onSaveGraphNode(node);
+              }
+              for (const edge of newEdges) {
+                await onSaveGraphEdge(edge);
+              }
+            } catch (graphErr) {
+              console.warn('Extraction graph sync non-blocking error:', graphErr);
+            }
+
             const refreshedInteraction: JournalInteraction = {
               ...updatedInteraction,
               title: extractData.title || updatedInteraction.title,
@@ -270,6 +332,15 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
                 (extractData.memories?.length || 0),
             };
             await onSaveInteraction(refreshedInteraction);
+
+            // The session node's label mirrors the interaction title — refresh
+            // it now that extraction may have set a better title.
+            try {
+              const existingSessionNode = graphNodes.find((n) => n.id === `node_session_${interactionId}`);
+              await onSaveGraphNode(buildSessionNode(userId, refreshedInteraction, existingSessionNode));
+            } catch (graphErr) {
+              console.warn('Session graph node title refresh non-blocking error:', graphErr);
+            }
           }
         } catch (memErr) {
           console.warn('Memory extraction non-blocking error:', memErr);
@@ -388,10 +459,7 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
   const hasMessages = Boolean(interaction && interaction.messages && interaction.messages.length > 0);
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] bg-[#08080E] text-[#F3F0EB] overflow-hidden relative">
-      {/* Background subtle noise/atmosphere overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.06),rgba(255,255,255,0))] pointer-events-none" />
-
+    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] text-[#F3F0EB] overflow-hidden relative">
       {/* Top Bar (Active session mode or Room navigation) */}
       {hasMessages ? (
         <div className="px-4 sm:px-8 py-3 border-b border-[#232336] bg-[#0E0E18]/90 backdrop-blur-md flex items-center justify-between gap-3 shrink-0 z-10">
@@ -451,10 +519,11 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
         <RoomNavigation
           onOpenLittleThings={onOpenLittleThings}
           onOpenHappyPlace={onOpenHappyPlace}
-          onOpenWeeklyReceipts={onOpenWeeklyReceipts}
           onOpenMemoryDrawer={onOpenMemoryDrawer}
           currentMood={moodPersonality}
-          onSelectMood={setMoodPersonality}
+          onSelectMood={setManualOverride}
+          isAutoMode={manualOverride === null}
+          onClearOverride={() => setManualOverride(null)}
           onNewVentSession={onNewVentSession}
           isSessionActive={hasMessages}
         />
@@ -512,7 +581,6 @@ export const JournalStudio: React.FC<JournalStudioProps> = ({
             <ThingsLyingAround
               memories={memories}
               onOpenHappyPlace={onOpenHappyPlace}
-              onOpenWeeklyReceipts={onOpenWeeklyReceipts}
               onOpenMemoryDrawer={onOpenMemoryDrawer}
               onOpenLittleThings={onOpenLittleThings}
               moodPersonality={moodPersonality}

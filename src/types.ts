@@ -71,3 +71,50 @@ export interface UserProfile {
   happyPlaces?: string[];
 }
 
+// --- Knowledge Graph ---
+
+export type GraphNodeType =
+  | 'session'
+  | 'memory'
+  | 'like'
+  | 'dislike'
+  | 'aspiration'
+  | 'person'
+  | 'activity'
+  | 'mood_moment';
+
+export interface GraphNode {
+  id: string;
+  userId: string;
+  type: GraphNodeType;
+  label: string;
+  description?: string;
+  importance: number;
+  mood?: MoodState;
+  sourceSessionId?: string;
+  sourceMemoryId?: string;
+  createdAt: number;
+  lastReferencedAt: number;
+  referenceCount: number;
+}
+
+export type GraphEdgeRelation =
+  | 'mentions'
+  | 'relates_to'
+  | 'causes'
+  | 'contradicts'
+  | 'progresses_toward'
+  | 'about_person'
+  | 'evokes_mood'
+  | 'similar_to';
+
+export interface GraphEdge {
+  id: string;
+  userId: string;
+  source: string;
+  target: string;
+  relation: GraphEdgeRelation;
+  weight: number;
+  createdAt: number;
+}
+
